@@ -19,7 +19,7 @@
  *
  * @package    repository_bscw
  * @category   test
- * @copyright  2013 Frédéric Massart
+ * @copyright 2016 Martin Schleyer {@link http://www.m-serve.de/}
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
@@ -28,7 +28,7 @@
  *
  * @package    repository_bscw
  * @category   test
- * @copyright  2013 Frédéric Massart
+ * @copyright 2016 Martin Schleyer {@link http://www.m-serve.de/}
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class repository_bscw_generator extends testing_repository_generator {
@@ -41,14 +41,11 @@ class repository_bscw_generator extends testing_repository_generator {
      */
     protected function prepare_type_record(array $record) {
         $record = parent::prepare_type_record($record);
-        if (!isset($record['dropbox_key'])) {
-            $record['dropbox_key'] = 'key';
+        if (!isset($record['bscw_url'])) {
+            $record['bscw_url'] = 'https://demo.bscw.de/bscw/bscw.cgi';
         }
-        if (!isset($record['dropbox_secret'])) {
-            $record['dropbox_secret'] = 'secret';
-        }
-        if (!isset($record['dropbox_cachelimit'])) {
-            $record['dropbox_cachelimit'] = 0;
+        if (!isset($record['bscw_forcemoodlename'])) {
+            $record['bscw_forcemoodlename'] = false;
         }
         return $record;
     }

@@ -17,12 +17,11 @@
  * Version details
  * 
  * @package repository_bscw
- * @copyright 2016 Martin Schleyer
- * @copyright 2010 Dongsheng Cai
+ * @copyright  2016 Martin Schleyer {@link http://www.m-serve.de/}
  * @author Martin Schleyer <schleyer@oszimt.de>
  * @license http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 defined ( 'MOODLE_INTERNAL' ) || die ();
-$plugin->version = 20161016; // The current plugin version (Date: YYYYMMDDXX)
+$plugin->version  = 2016101609; // The current plugin version (Date: YYYYMMDDXX)
 $plugin->requires = 2016051900; // Requires this Moodle version
 $plugin->component = 'repository_bscw'; // Full name of the plugin (used for diagnostics)

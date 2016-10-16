@@ -18,9 +18,8 @@
  * 
  * @since Moodle 3.1
  * @package repository_bscw
- * @copyright 2016 Martin Schleyer {@link http://www.m-serve.de/}
- * @copyright 2012 Marina Glancy
- * @copyright 2010 Dongsheng Cai {@link http://dongsheng.org}
+ * @copyright  2016 Martin Schleyer {@link http://www.m-serve.de/}
+ * @author     Martin Schleyer <schleyer@oszimt.de>
  * @license http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 require_once ($CFG->dirroot . '/repository/lib.php');
@@ -30,7 +29,6 @@ require_once (dirname ( __FILE__ ) . '/locallib.php');
  * 
  * @package repository_bscw
  * @copyright 2016 Martin Schleyer {@link http://www.m-serve.de/}
- * @copyright 2010 Dongsheng Cai
  * @license http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class repository_bscw extends repository {
@@ -40,12 +38,11 @@ class repository_bscw extends repository {
     public $files;
     /** @var bool flag of login status */
     public $logged = false;
-    /** @var int maximum size of file to cache in moodle filepool */
-    public $cachelimit = null;
-    /** @var int cached file ttl */
-    private $cachedfilettl = null;
     /** @var string URL to the bscw server */
     private $bscw_url;
+	/** @var string key user access key to BSCW */
+	private $bscw_key;
+	
     /**
      * Constructor of bscw plugin
      * 
@@ -54,29 +51,50 @@ class repository_bscw extends repository {
      * @param array $options            
      */
     public function __construct($repositoryid, $context = SYSCONTEXTID, $options = array()) {
-        global $CFG;
+        global $CFG, $SESSION;
         $options ['page'] = optional_param ( 'p', 1, PARAM_INT );
         parent::__construct ( $repositoryid, $context, $options );
+		
+		$this->sessname = 'bscw_key_'.$this->id;
+
         $this->setting = 'bscw_';
         $this->bscw_url = $this->get_option ( 'bscw_url' );
-        // one day
-        $this->cachedfilettl = 60 * 60 * 24;
-        // Generate key
-        // 1. Check if user has stored key
-        // -> if yes - use
-        // -> if no - login?!
-        if (! empty ( $this->key )) {
+		
+		$args = array (
+                'bscw_url' => $this->bscw_url,
+        );
+		
+        $this->bscw = new bscw ( $args );
+
+		
+		$this->username   = optional_param('bscw_username', '', PARAM_RAW);
+		$this->password   = optional_param('bscw_password', '', PARAM_RAW);
+	    
+		try{
+                // deal with user logging in
+                if (empty($SESSION->{$this->sessname}) && !empty($this->username) && !empty($this->password)) {
+                    $this->bscw_key = $this->bscw->authenticate($this->username, $this->password);
+                    $SESSION->{$this->sessname} = $this->bscw_key;
+                } else {
+                    if (!empty($SESSION->{$this->sessname})) {
+                        $this->bscw_key = $SESSION->{$this->sessname};
+						$this->bscw->set_key($this->bscw_key);
+                    }
+                }
+            } catch (Exception $e) {
+                $this->logout();
+            }
+		
+        if (! empty ( $this->bscw_key )) {
             $this->logged = true;
         }
+
+
         $callbackurl = new moodle_url ( $CFG->wwwroot . '/repository/repository_callback.php', array (
                 'callback' => 'yes',
                 'repo_id' => $repositoryid 
         ) );
-        $args = array (
-                'bscw_url' => $this->bscw_url,
-                'key' => $this->key 
-        );
-        $this->bscw = new bscw ( $args );
+		
     }
     /**
      * Get bscw workspace listing
@@ -85,36 +103,41 @@ class repository_bscw extends repository {
      * @param int $page            
      * @return array
      */
-    public function get_listing($path = '', $page = '1') {
+    public function get_listing($objectid = '', $path = '/') {
+		if (!$this->logged)
+		{
+			return $this->print_login();
+		}
         global $OUTPUT;
         if (empty ( $path ) || $path == '/') {
             $path = '/';
         } else {
             $path = file_correct_filepath ( $path );
         }
-        $encoded_path = str_replace ( "%2F", "/", rawurlencode ( $path ) );
+        $ret = array();
+        $ret['dynload'] = true;
+        $ret['list'] = array();
+		
         $list = array ();
-        $list ['list'] = array ();
-        $list ['manage'] = $this->bscw_url;
-        $list ['dynload'] = true;
-        $list ['nosearch'] = true;
-        $list ['message'] = get_string ( 'logoutdesc', 'repository_bscw' );
+        $ret ['list'] = array ();
+        $ret ['manage'] = $this->bscw_url;
+        $ret ['nosearch'] = true;
+        $ret ['message'] = get_string ( 'logoutdesc', 'repository_bscw' );
         // process breadcrumb trail
-        $list ['path'] = array (
+        $ret ['path'] = array (
                 array (
                         'name' => get_string ( 'bscw', 'repository_bscw' ),
                         'path' => '/' 
                 ) 
         );
-        $result = $this->bscw->get_listing ( $encoded_path, 1 );
-        if (! is_object ( $result ) || empty ( $result )) {
-            return $list;
+		
+        $result = $this->bscw->get_listing ($objectid, 1 );
+        if (! is_array ( $result ) || empty ( $result )) {
+            return $ret;
         }
-        if (empty ( $result->path )) {
-            $current_path = '/';
-        } else {
-            $current_path = file_correct_filepath ( $result->path );
-        }
+		
+		$ret ['path'] = $this->bscw->generate_path_array($objectid);
+
         $trail = '';
         if (! empty ( $path )) {
             $parts = explode ( '/', $path );
@@ -122,36 +145,28 @@ class repository_bscw extends repository {
                 foreach ( $parts as $part ) {
                     if (! empty ( $part )) {
                         $trail .= ('/' . $part);
-                        $list ['path'] [] = array (
+                        $ret ['path'] [] = array (
                                 'name' => $part,
                                 'path' => $trail 
                         );
                     }
                 }
             } else {
-                $list ['path'] [] = array (
+                $ret ['path'] [] = array (
                         'name' => $path,
                         'path' => $path 
                 );
             }
         }
-        if (! empty ( $result->error )) {
-            // reset access key
-            set_user_preference ( $this->setting . '_key', '' );
-            throw new repository_exception ( 'repositoryerror', 'repository', '', $result->error );
-        }
-        if (empty ( $result->contents ) or ! is_array ( $result->contents )) {
-            return $list;
-        }
-        $files = $result->contents;
+
         $dirslist = array ();
         $fileslist = array ();
-        foreach ( $files as $file ) {
-            if ($file->is_dir) {
+        foreach ( $result as $file ) {
+            if ($file['is_dir']) {
                 $dirslist [] = array (
-                        'title' => $file->name,
-                        'path' => $file->id,
-                        'date' => strtotime ( $file->modified ),
+                        'title' => $file['name'],
+                        'path' => $file['id'],
+                        'date' => $file['modified'],
                         'thumbnail' => $OUTPUT->pix_url ( file_folder_icon ( 64 ) )->out ( false ),
                         'thumbnail_height' => 64,
                         'thumbnail_width' => 64,
@@ -159,11 +174,11 @@ class repository_bscw extends repository {
                 );
             } else {
                 $fileslist [] = array (
-                        'title' => $file->name,
-                        'source' => $file->id,
-                        'size' => $file->bytes,
-                        'date' => $file->modified,
-                        'thumbnail' => $OUTPUT->pix_url ( file_mimetype_icon ( $file->type, 64 ) )->out ( false ),
+						'title' => $file['name'],
+                        'source' => $file['id'],
+                        'size' => $file['size'],
+                        'date' => $file['modified'],
+                        'thumbnail' => $OUTPUT->pix_url ( file_mimetype_icon ( $file['content_type'], 64 ) )->out ( false ),
                         'thumbnail_height' => 64,
                         'thumbnail_width' => 64 
                 );
@@ -173,25 +188,23 @@ class repository_bscw extends repository {
                 $this,
                 'filter' 
         ) );
-        $list ['list'] = array_merge ( $dirslist, array_values ( $fileslist ) );
-        return $list;
+        $ret ['list'] = array_merge ( $dirslist, array_values ( $fileslist ) );
+        return $ret;
     }
     public function print_login() { // From repository_alfresco
+	global $USER;
         if ($this->options ['ajax']) {
             $user_field = new stdClass ();
-            $user_field->label = get_string ( 'username', 'repository_bscw' ) . ': ';
             $user_field->id = 'bscw_username';
-            $user_field->type = 'text';
-            $user_field->name = 'bscw_username';
-            // TODO check how to add the read only field?
+            $user_field->name = 'bscw_username';			
+			$user_field->value = $USER->username;
+			$user_field->type = 'text';			
+			$user_field->label = get_string ( 'username', 'repository_bscw' ) . ': ' ;
+            // TODO change core to allow  the read only field?
             if ($this->get_option ( 'bscw_forcemoodlename' )) {
-                global $USER;
-                $user_field->value = $USER->username;
-                $user_field->attributes = array (
-                        'readonly' => true 
-                );
+				$user_field->readonly = true;
             }
-            $passwd_field = new stdClass ();
+			$passwd_field = new stdClass ();
             $passwd_field->label = get_string ( 'password', 'repository_bscw' ) . ': ';
             $passwd_field->id = 'bscw_password';
             $passwd_field->type = 'password';
@@ -201,15 +214,16 @@ class repository_bscw extends repository {
                     $user_field,
                     $passwd_field 
             );
+			$ret['login_btn_label'] = get_string ( 'login', 'repository_bscw' );
             return $ret;
         } else { // Non-AJAX login form - directly output the form elements
             echo '<table>';
             echo '<tr><td><label>' . get_string ( 'username', 'repository_bscw' ) . '</label></td>';
-            echo '<td><input type="text" name="bscw_username" /></td></tr>';
+            echo '<td><input type="text" name="bscw_username" value="' . $USER->username . '"/></td></tr>';
             echo '<tr><td><label>' . get_string ( 'password', 'repository_bscw' ) . '</label></td>';
             echo '<td><input type="password" name="bscw_password" /></td></tr>';
             echo '</table>';
-            echo '<input type="submit" value="Enter" />';
+            echo '<input type="submit" value="' .  get_string ( 'login', 'repository_bscw' ) . '" />';
         }
     }
     /**
@@ -218,10 +232,17 @@ class repository_bscw extends repository {
      * @return array
      */
     public function logout() {
-        set_user_preference ( $this->setting . '_key', '' );
-        $this->key = '';
-        return $this->print_login ();
+		global $SESSION;
+        unset($SESSION->{$this->sessname});
+		$this->bscw_key = '';
+        return $this->print_login();
     }
+	
+	public function check_login() {
+        global $SESSION;
+        return !empty($SESSION->{$this->sessname});
+    }
+	
     /**
      * Set bscw option
      * 
@@ -248,7 +269,7 @@ class repository_bscw extends repository {
      */
     public function get_option($config = '') {
         if ($config === 'bscw_url') {
-            return trim ( get_config ( 'bscw', 'bscw_cachelimit' ) );
+            return trim ( get_config ( 'bscw', 'bscw_url' ) );
         } elseif ($config === 'bscw_forcemoodlename') {
             return get_config ( 'bscw', 'bscw_forcemoodlename' );
         } else {
