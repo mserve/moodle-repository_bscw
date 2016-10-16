@@ -171,7 +171,7 @@ class bscw {
     public function get_listing($objectid = '', $depth = 1) {
         if (empty ( $objectid ) || $objectid == "/") {
             // We need to get the elements of the root folder
-            $path = $this->root_id;
+            $objectid = $this->root_id;
         }
         $data = $this->call_api ( "get_attributes", array (
                 $objectid,
